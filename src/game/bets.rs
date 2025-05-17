@@ -1,8 +1,7 @@
 // src/game/bets.rs
 
-//! Defines bet types, placement logic, winning conditions, and payouts.
-
 use super::wheel::{Color, Pocket};
+use crate::game::Wheel;
 use std::collections::HashSet;
 use std::fmt;
 
@@ -10,45 +9,46 @@ use std::fmt;
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum BetType {
     // Inside Bets
-    StraightUp(u8),              // Bet on a single number (0-36)
-    Split(u8, u8),             // Bet on two adjacent numbers
-    Street(u8, u8, u8),        // Bet on three numbers in a horizontal line
-    Corner(u8, u8, u8, u8),    // Bet on four numbers that meet at a corner
-    SixLine(u8, u8, u8, u8, u8, u8), // Bet on two adjacent streets (six numbers)
+    StraightUp(String),         // Bet on a single ticker (e.g., "AAPL")
+    Split(String, String),     // Bet on two tickers
+    // Note: Street, Corner, SixLine may need ticker-based equivalents or removal if less relevant
 
-    // Outside Bets
-    Column(u8),                // Bet on one of the three vertical columns (1, 2, or 3)
-    Dozen(u8),                 // Bet on one of the three dozens (1-12, 13-24, 25-36) (1, 2, or 3)
-    Red,                       // Bet on all red numbers
-    Black,                     // Bet on all black numbers
-    Odd,                       // Bet on all odd numbers (excluding 0)
-    Even,                      // Bet on all even numbers (excluding 0)
+    // Outside Bets (Traditional)
+    Red,                       // Bet on all red pockets
+    Black,                     // Bet on all black pockets
+    Odd,                       // Bet on odd-numbered pockets (excluding 0)
+    Even,                      // Bet on even-numbered pockets (excluding 0)
     Low,                       // Bet on numbers 1-18
     High,                      // Bet on numbers 19-36
+
+    // Outside Bets (Wall Street-themed)
+    Category(String),          // Bet on a stock category (e.g., "Magnificent Seven")
+    GrowthDozen,               // Equivalent to Dozen 1 (Growth-focused stocks)
+    ValueDozen,                // Equivalent to Dozen 2 (Value-focused stocks)
+    BlueChipDozen,             // Equivalent to Dozen 3 (Blue-chip stocks)
+    Column(u8),                // Keep for compatibility, can represent sector groups later
 }
 
 impl fmt::Display for BetType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            BetType::StraightUp(n) => write!(f, "Straight Up ({})", n),
-            BetType::Split(n1, n2) => write!(f, "Split ({}, {})", n1, n2),
-            BetType::Street(n1, n2, n3) => write!(f, "Street ({}, {}, {})", n1, n2, n3),
-            BetType::Corner(n1, n2, n3, n4) => write!(f, "Corner ({}, {}, {}, {})", n1, n2, n3, n4),
-            BetType::SixLine(n1, n2, n3, n4, n5, n6) => write!(f, "Six Line ({}, {}, {}, {}, {}, {})", n1, n2, n3, n4, n5, n6),
-            BetType::Column(c) => write!(f, "Column {}", c),
-            BetType::Dozen(d) => write!(f, "Dozen {}", d),
+            BetType::StraightUp(ticker) => write!(f, "Straight Up ({})", ticker),
+            BetType::Split(t1, t2) => write!(f, "Split ({}, {})", t1, t2),
             BetType::Red => write!(f, "Red"),
             BetType::Black => write!(f, "Black"),
             BetType::Odd => write!(f, "Odd"),
             BetType::Even => write!(f, "Even"),
             BetType::Low => write!(f, "Low (1-18)"),
             BetType::High => write!(f, "High (19-36)"),
+            BetType::Category(cat) => write!(f, "Category ({})", cat),
+            BetType::GrowthDozen => write!(f, "Growth Dozen"),
+            BetType::ValueDozen => write!(f, "Value Dozen"),
+            BetType::BlueChipDozen => write!(f, "Blue Chip Dozen"),
+            BetType::Column(c) => write!(f, "Column {}", c),
         }
     }
 }
 
-
-/// Represents a single bet placed by the player.
 #[derive(Debug, Clone)]
 pub struct Bet {
     pub bet_type: BetType,
@@ -56,175 +56,139 @@ pub struct Bet {
 }
 
 impl Bet {
-    /// Creates a new bet.
     pub fn new(bet_type: BetType, amount: u32) -> Self {
-        // Basic validation: ensure amount is positive
         if amount == 0 {
-            // In a real app, this might return Result<Bet, Error>
             panic!("Bet amount must be positive.");
         }
         Bet { bet_type, amount }
     }
 
-    /// Calculates the payout for this bet if it wins.
-    /// The payout includes the original stake.
-    /// Example: A $10 Straight Up bet wins $360 ($10 * 35 + $10 stake).
     pub fn calculate_payout(&self) -> u32 {
         self.amount * payout_multiplier(&self.bet_type) + self.amount
     }
 
-    /// Checks if this bet wins based on the winning pocket.
     pub fn check_win(&self, winning_pocket: &Pocket) -> bool {
         let winning_number = winning_pocket.number;
         let winning_color = winning_pocket.color;
+        let winning_ticker = &winning_pocket.ticker;
+        let winning_categories = &winning_pocket.categories;
 
-        // Zero never counts for even/odd, red/black, high/low, columns, dozens
+        // Zero (Recession/Surge) handling
         if winning_number == 0 {
             return match &self.bet_type {
-                BetType::StraightUp(n) => *n == 0,
-                // Add specific cases if bets involving 0 are allowed (e.g., 0/1/2 street)
-                _ => false, // 0 loses for all standard outside bets
+                BetType::StraightUp(ticker) => ticker == winning_ticker,
+                _ => false, // Zero loses for all standard outside bets
             };
         }
 
-        // Check based on bet type
         match &self.bet_type {
-            // --- Inside Bets ---
-            BetType::StraightUp(n) => winning_number == *n,
-            BetType::Split(n1, n2) => winning_number == *n1 || winning_number == *n2,
-            BetType::Street(n1, n2, n3) => {
-                winning_number == *n1 || winning_number == *n2 || winning_number == *n3
-            }
-            BetType::Corner(n1, n2, n3, n4) => {
-                winning_number == *n1 || winning_number == *n2 || winning_number == *n3 || winning_number == *n4
-            }
-            BetType::SixLine(n1, n2, n3, n4, n5, n6) => {
-                 winning_number == *n1 || winning_number == *n2 || winning_number == *n3 ||
-                 winning_number == *n4 || winning_number == *n5 || winning_number == *n6
-            }
+            // Inside Bets
+            BetType::StraightUp(ticker) => winning_ticker == ticker,
+            BetType::Split(t1, t2) => winning_ticker == t1 || winning_ticker == t2,
 
-            // --- Outside Bets ---
-            BetType::Column(col) => {
-                // Column 1: 1, 4, 7, ..., 34 (numbers where n % 3 == 1)
-                // Column 2: 2, 5, 8, ..., 35 (numbers where n % 3 == 2)
-                // Column 3: 3, 6, 9, ..., 36 (numbers where n % 3 == 0)
-                match col {
-                    1 => winning_number % 3 == 1,
-                    2 => winning_number % 3 == 2,
-                    3 => winning_number % 3 == 0,
-                    _ => false, // Invalid column
-                }
-            }
-            BetType::Dozen(doz) => {
-                // Dozen 1: 1-12
-                // Dozen 2: 13-24
-                // Dozen 3: 25-36
-                match doz {
-                    1 => winning_number >= 1 && winning_number <= 12,
-                    2 => winning_number >= 13 && winning_number <= 24,
-                    3 => winning_number >= 25 && winning_number <= 36,
-                    _ => false, // Invalid dozen
-                }
-            }
+            // Traditional Outside Bets
             BetType::Red => winning_color == Color::Red,
             BetType::Black => winning_color == Color::Black,
             BetType::Odd => winning_number % 2 != 0,
             BetType::Even => winning_number % 2 == 0,
             BetType::Low => winning_number >= 1 && winning_number <= 18,
             BetType::High => winning_number >= 19 && winning_number <= 36,
+            BetType::Column(col) => match col {
+                1 => winning_number % 3 == 1,
+                2 => winning_number % 3 == 2,
+                3 => winning_number % 3 == 0,
+                _ => false,
+            },
+
+            // Wall Street-themed Bets
+            BetType::Category(cat) => winning_categories.contains(cat),
+            BetType::GrowthDozen => winning_categories.contains(&"Growth Dozen A".to_string()),
+            BetType::ValueDozen => winning_categories.contains(&"Value Dozen B".to_string()),
+            BetType::BlueChipDozen => winning_categories.contains(&"Blue Chip Dozen C".to_string()),
         }
     }
 }
 
-
-/// Returns the payout multiplier (odds) for a given bet type.
-/// This is the amount won *per unit bet*, not including the stake return.
-/// Example: Straight Up pays 35 to 1.
 pub fn payout_multiplier(bet_type: &BetType) -> u32 {
     match bet_type {
         // Inside Bets
         BetType::StraightUp(_) => 35,
         BetType::Split(_, _) => 17,
-        BetType::Street(_, _, _) => 11,
-        BetType::Corner(_, _, _, _) => 8,
-        BetType::SixLine(_, _, _, _, _, _) => 5,
         // Outside Bets
-        BetType::Column(_) => 2,
-        BetType::Dozen(_) => 2,
         BetType::Red => 1,
         BetType::Black => 1,
         BetType::Odd => 1,
         BetType::Even => 1,
         BetType::Low => 1,
         BetType::High => 1,
+        BetType::Column(_) => 2,
+        BetType::Category(_) => 2, // Adjust based on category size if needed
+        BetType::GrowthDozen => 2,
+        BetType::ValueDozen => 2,
+        BetType::BlueChipDozen => 2,
     }
 }
 
-// --- Helper functions for creating valid bets ---
-// In a real application, these would perform more rigorous validation
-// based on the layout of the roulette table.
-
-/// Creates a Straight Up bet if the number is valid (0-36).
-pub fn create_straight_up(number: u8, amount: u32) -> Option<Bet> {
-    if number <= 36 {
-        Some(Bet::new(BetType::StraightUp(number), amount))
+// Helper functions for creating bets
+pub fn create_straight_up(ticker: &str, amount: u32, wheel: &Wheel) -> Option<Bet> {
+    if wheel.get_all_pockets().iter().any(|p| p.ticker == ticker) {
+        Some(Bet::new(BetType::StraightUp(ticker.to_string()), amount))
     } else {
-        println!("Invalid number for Straight Up bet (must be 0-36).");
+        println!("Invalid ticker: {}. Please choose a valid stock ticker.", ticker);
         None
     }
 }
 
-/// Creates a Red bet.
+pub fn create_category_bet(category: &str, amount: u32, wheel: &Wheel) -> Option<Bet> {
+    if wheel.get_all_pockets().iter().any(|p| p.categories.contains(&category.to_string())) {
+        Some(Bet::new(BetType::Category(category.to_string()), amount))
+    } else {
+        println!("Invalid category: {}. Please choose a valid category.", category);
+        None
+    }
+}
+
 pub fn create_red_bet(amount: u32) -> Bet {
-     Bet::new(BetType::Red, amount)
+    Bet::new(BetType::Red, amount)
 }
 
-/// Creates a Black bet.
 pub fn create_black_bet(amount: u32) -> Bet {
-     Bet::new(BetType::Black, amount)
+    Bet::new(BetType::Black, amount)
 }
 
-/// Creates an Even bet.
 pub fn create_even_bet(amount: u32) -> Bet {
-     Bet::new(BetType::Even, amount)
+    Bet::new(BetType::Even, amount)
 }
 
-/// Creates an Odd bet.
 pub fn create_odd_bet(amount: u32) -> Bet {
-     Bet::new(BetType::Odd, amount)
+    Bet::new(BetType::Odd, amount)
 }
 
-/// Creates a Low (1-18) bet.
 pub fn create_low_bet(amount: u32) -> Bet {
-     Bet::new(BetType::Low, amount)
+    Bet::new(BetType::Low, amount)
 }
 
-/// Creates a High (19-36) bet.
 pub fn create_high_bet(amount: u32) -> Bet {
-     Bet::new(BetType::High, amount)
+    Bet::new(BetType::High, amount)
 }
 
-/// Creates a Column bet (1, 2, or 3).
+pub fn create_growth_dozen_bet(amount: u32) -> Bet {
+    Bet::new(BetType::GrowthDozen, amount)
+}
+
+pub fn create_value_dozen_bet(amount: u32) -> Bet {
+    Bet::new(BetType::ValueDozen, amount)
+}
+
+pub fn create_blue_chip_dozen_bet(amount: u32) -> Bet {
+    Bet::new(BetType::BlueChipDozen, amount)
+}
+
 pub fn create_column_bet(column: u8, amount: u32) -> Option<Bet> {
     if column >= 1 && column <= 3 {
         Some(Bet::new(BetType::Column(column), amount))
     } else {
-         println!("Invalid column number (must be 1, 2, or 3).");
+        println!("Invalid column number (must be 1, 2, or 3).");
         None
     }
 }
-
-/// Creates a Dozen bet (1, 2, or 3).
-pub fn create_dozen_bet(dozen: u8, amount: u32) -> Option<Bet> {
-    if dozen >= 1 && dozen <= 3 {
-        Some(Bet::new(BetType::Dozen(dozen), amount))
-    } else {
-        println!("Invalid dozen number (must be 1, 2, or 3).");
-        None
-    }
-}
-
-// TODO: Add creation functions and VALIDATION for Split, Street, Corner, SixLine.
-// This requires knowledge of the table layout (which numbers are adjacent).
-// For now, we will focus on the simpler bets in the main game loop.
-

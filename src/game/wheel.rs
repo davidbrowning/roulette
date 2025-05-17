@@ -78,20 +78,22 @@ impl Wheel {
         let mut pockets = Vec::with_capacity(37);
         let mut pocket_map = HashMap::with_capacity(37);
 
-        // Define colors for numbers (standard European layout)
         let red_numbers: [u8; 18] = [1, 3, 5, 7, 9, 12, 14, 16, 18, 19, 21, 23, 25, 27, 30, 32, 34, 36];
         let wheel_order: [u8; 37] = [
             0, 32, 15, 19, 4, 21, 2, 25, 17, 34, 6, 27, 13, 36, 11, 30, 8, 23,
             10, 5, 24, 16, 33, 1, 20, 14, 31, 9, 22, 18, 29, 7, 28, 12, 35, 3, 26,
         ];
 
-        // Add pocket 0 (Green)
         let pocket_defs = Self::get_pocket_definitions();
 
-        // Assign each pocket a number and color based on the wheel order
+        // Ensure we have exactly 37 pockets
+        if pocket_defs.len() != 37 {
+            panic!("Expected 37 pocket definitions, got {}", pocket_defs.len());
+        }
+
         for (i, &number) in wheel_order.iter().enumerate() {
-            let mut pocket = pocket_defs[i].clone(); // Use the i-th pocket definition
-            pocket.number = number; // Assign the roulette number
+            let mut pocket = pocket_defs[i].clone();
+            pocket.number = number;
             pocket.color = if number == 0 {
                 Color::Green
             } else if red_numbers.contains(&number) {
@@ -103,7 +105,7 @@ impl Wheel {
             pockets.push(pocket.clone());
             pocket_map.insert(number, pocket);
         }
-        
+
         Wheel { pockets, pocket_map }
     }
 
@@ -288,9 +290,6 @@ impl Wheel {
             // Green Spaces 
             ("RCSN", ("Recession", vec![
                 "Recession", "Recession", "RCSN"
-            ])),
-            ("SRGE", ("Surge", vec![
-                "Market Surge", "Market Surge", "SRGE"
             ])),
         ]);
     
